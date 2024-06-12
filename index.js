@@ -48,128 +48,95 @@ async function run() {
   try {
     await client.connect();
     const ticketBookingDashboard = client.db("ticketBookingDashboard");
-    const usersCollection = ticketBookingDashboard.collection("users");
-    const eventsCollection = ticketBookingDashboard.collection("events");
-    const bookingsCollection = ticketBookingDashboard.collection("bookings");
+    const userCollection = ticketBookingDashboard.collection("users");
+    const eventCollection = ticketBookingDashboard.collection("events");
+    const bookingCollection = ticketBookingDashboard.collection("booking");
 
-    // User registration
-    app.post("/users/register", async (req, res) => {
-      const { name, email, password } = req.body;
-      const hashedPassword = await bcrypt.hash(password, 10);
-
-      const user = { name, email, password: hashedPassword };
-      try {
-        await usersCollection.insertOne(user);
-        const token = createToken(user);
-        res.send({ token, user: { id: user._id, name, email } });
-      } catch (err) {
-        res.status(400).send("Error registering user");
+    // user
+    app.post("/user", async (req, res) => {
+      const user = req.body;
+      const result = await userCollection.insertOne(user);
+      if (result.insertedCount === 1) {
+        res.status(201).json({ message: "User added successfully" });
+      } else {
+        res.status(500).json({ message: "Failed to add user" });
       }
     });
 
-    // User login
-    app.post("/users/login", async (req, res) => {
-      const { email, password } = req.body;
-      const user = await usersCollection.findOne({ email });
-      if (!user) return res.status(400).send("Invalid email or password.");
-
-      const validPassword = await bcrypt.compare(password, user.password);
-      if (!validPassword)
-        return res.status(400).send("Invalid email or password.");
-
-      const token = createToken(user);
-      res.send({ token, user: { id: user._id, name: user.name, email } });
+    // Get all users
+    app.get("/user", async (req, res) => {
+      const query = {};
+      const cursor = userCollection.find(query);
+      const user = await cursor.toArray();
+      res.send(user);
     });
 
-    // Create event
-    app.post("/events", verifyToken, async (req, res) => {
-      const { title, description, date, price } = req.body;
-      const event = { title, description, date, price };
-      await eventsCollection.insertOne(event);
-      res.send(event);
+    //post booking
+    app.post("/booking", async (req, res) => {
+      const booking = req.body;
+      const result = await bookingCollection.insertOne(booking);
+      if (result.insertedCount === 1) {
+        res.status(201).json({ message: "booking successful" });
+      } else {
+        res.status(500).json({ message: "Failed to book" });
+      }
     });
 
-    // Get all events
+    //Get Booking by ID
+    app.get("/booking/:id", async (req, res) => {
+      try {
+        const bookingId = req.params.id;
+        const booking = { id: bookingId };
+        if (!booking) {
+          return res.status(404).json({ error: "Booking not found" });
+        }
+        res.json(booking);
+      } catch (error) {
+        res.status(500).json({ error: "Failed to retrieve booking" });
+      }
+    });
+
+    // Get All Events
     app.get("/events", async (req, res) => {
-      const events = await eventsCollection.find().toArray();
-      res.send(events);
-    });
-
-    // Get event details
-    app.get("/events/:id", async (req, res) => {
-      const event = await eventsCollection.findOne({
-        _id: new ObjectId(req.params.id),
-      });
-      if (!event) return res.status(404).send("Event not found.");
+      const query = {};
+      const cursor = eventCollection.find(query);
+      const event = await cursor.toArray();
       res.send(event);
     });
 
-    // Update event
-    app.patch("/events/:id", verifyToken, async (req, res) => {
-      const updates = req.body;
-      const result = await eventsCollection.updateOne(
-        { _id: new ObjectId(req.params.id) },
-        { $set: updates }
-      );
-      if (!result.matchedCount) return res.status(404).send("Event not found.");
-      res.send({ message: "Event updated" });
+    // Get Event by ID
+    app.get("/events/:id", async (req, res) => {
+      try {
+        const eventId = new ObjectId(req.params.id);
+        const event = await eventCollection.findOne({ _id: eventId });
+        if (!event) {
+          return res.status(404).json({ message: "Event not found" });
+        }
+        res.json(event);
+      } catch (error) {
+        console.error("Error retrieving event:", error);
+        res.status(500).json({ error: "Failed to retrieve event" });
+      }
     });
 
-    // Delete event
-    app.delete("/events/:id", verifyToken, async (req, res) => {
-      const result = await eventsCollection.deleteOne({
-        _id: new ObjectId(req.params.id),
-      });
-      if (!result.deletedCount) return res.status(404).send("Event not found.");
-      res.send({ message: "Event deleted" });
-    });
-
-    // Book tickets
-    app.post("/events/:id/book", verifyToken, async (req, res) => {
-      const { tickets, paid } = req.body;
-      const event = await eventsCollection.findOne({
-        _id: new ObjectId(req.params.id),
-      });
-      if (!event) return res.status(404).send("Event not found.");
-
-      const booking = {
-        user: new ObjectId(req.user.id),
-        event: new ObjectId(event._id),
-        tickets,
-        paid,
-      };
-      await bookingsCollection.insertOne(booking);
-      res.send(booking);
-    });
-
-    // Get bookings for an event
-    app.get("/events/:id/bookings", verifyToken, async (req, res) => {
-      const bookings = await bookingsCollection
-        .find({ event: new ObjectId(req.params.id) })
-        .toArray();
-      res.send(bookings);
-    });
-
-    // Payment processing (Stripe)
-    app.post("/payments", verifyToken, async (req, res) => {
-      const { amount, paymentMethodId } = req.body;
+    app.post("/create-payment-intent", async (req, res) => {
+      const { amount, currency } = req.body;
 
       try {
         const paymentIntent = await stripe.paymentIntents.create({
-          amount: amount * 100,
-          currency: "usd",
-          payment_method: paymentMethodId,
-          confirm: true,
+          amount,
+          currency,
         });
 
-        res.send({ success: true, paymentIntent });
+        res.status(200).json({ clientSecret: paymentIntent.client_secret });
       } catch (error) {
-        res.status(400).send({ error: error.message });
+        res.status(500).json({ error: "Failed to create payment intent" });
       }
     });
   } finally {
   }
 }
+run().catch(console.dir);
 
 app.get("/", (req, res) => {
   res.send("Route is working");
