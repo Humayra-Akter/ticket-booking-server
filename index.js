@@ -53,14 +53,30 @@ async function run() {
     const adminCollection = ticketBookingDashboard.collection("admin");
 
     // user
+    // app.post("/user", async (req, res) => {
+    //   const user = req.body;
+    //   const result = await userCollection.insertOne(user);
+    //   if (result.insertedCount === 1) {
+    //     res.status(201).json({ message: "User added successfully" });
+    //   } else {
+    //     res.status(500).json({ message: "Failed to add user" });
+    //   }
+    // });
+
     app.post("/user", async (req, res) => {
       const user = req.body;
-      const result = await userCollection.insertOne(user);
-      if (result.insertedCount === 1) {
-        res.status(201).json({ message: "User added successfully" });
-      } else {
-        res.status(500).json({ message: "Failed to add user" });
+
+      const token = createToken(user);
+      const isUserExist = await userCollection.findOne({ email: user?.email });
+      if (isUserExist?._id) {
+        return res.send({
+          status: "success",
+          message: "Login success",
+          token,
+        });
       }
+      await userCollection.insertOne(user);
+      return res.send({ token });
     });
 
     // admin
@@ -90,15 +106,25 @@ async function run() {
       res.send(admin);
     });
 
+    // Get admin by user
+    app.get("/admin/:email", async (req, res) => {
+      const userEmail = req.params.email;
+      const query = { "user.email": userEmail };
+      const admin = await adminCollection.find(query).toArray();
+      if (!admin || admin.length === 0) {
+        return res
+          .status(404)
+          .json({ message: "No admins found for the user" });
+      }
+      res.json(admin);
+    });
+
     //post booking
     app.post("/booking", async (req, res) => {
       const booking = req.body;
       const result = await bookingCollection.insertOne(booking);
-      if (result.insertedCount === 1) {
-        res.status(201).json({ message: "booking added successfully" });
-      } else {
-        res.status(500).json({ message: "Failed to add booking" });
-      }
+
+      res.send(result);
     });
 
     // Get all bookings
@@ -159,6 +185,47 @@ async function run() {
         return res.status(404).json({ message: "Event not found" });
       }
       res.json(event);
+    });
+
+    // Update Event by ID
+    app.put("/events/:id", async (req, res) => {
+      const id = req.params.id;
+      const updatedData = req.body;
+
+      try {
+        const result = await eventCollection.updateOne(
+          { _id: new ObjectId(id) },
+          { $set: updatedData }
+        );
+
+        if (result.modifiedCount === 1) {
+          const updatedEvent = await eventCollection.findOne({
+            _id: new ObjectId(id),
+          });
+          res.json(updatedEvent);
+        } else {
+          res.status(404).json({ message: "Event not found or not updated" });
+        }
+      } catch (error) {
+        console.error("Error updating event:", error);
+        res.status(500).json({ error: "Failed to update event" });
+      }
+    });
+
+    // Delete event
+    app.delete("/events/:id", async (req, res) => {
+      const id = req.params.id;
+      if (!ObjectId.isValid(id)) {
+        return res.status(400).send({ message: "Invalid event ID" });
+      }
+
+      const result = await eventCollection.deleteOne({
+        _id: new ObjectId(id),
+      });
+      if (result.deletedCount === 0) {
+        return res.status(404).send({ message: "Event not found" });
+      }
+      res.send({ message: "Event deleted successfully", result });
     });
 
     const stripe = require("stripe")(process.env.STRIPE_SECRET_KEY);
